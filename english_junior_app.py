@@ -220,7 +220,7 @@ div[data-testid="stMarkdownContainer"] p {
 /* ---- スマホ縦画面：さらに文字大き目・枠小さめに ---- */
 @media (max-width: 480px) {
     .block-container {
-        padding-top: 0.5rem !important;
+        padding-top: 2.0rem !important;
         padding-bottom: 0.5rem !important;
         padding-left: 0.6rem !important;
         padding-right: 0.6rem !important;
