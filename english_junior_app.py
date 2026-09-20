@@ -63,7 +63,7 @@ html, body, [class*="css"], .stMarkdown, .stButton>button, p, span, div {
 
 /* ---- 画面全体の余白を詰める（老眼対策：1画面に収める） ---- */
 .block-container {
-    padding-top: 0.8rem !important;
+    padding-top: 2.8rem !important;
     padding-bottom: 0.8rem !important;
     padding-left: 0.9rem !important;
     padding-right: 0.9rem !important;
@@ -924,8 +924,13 @@ def page_game():
                         # ★画面揺れアニメーション
                         effect_placeholder.markdown(show_effect("levelup",0),unsafe_allow_html=True)   
 
-                        # ★ Lv1 と Lv2 を交互に切り替える
-                        stage = (st.session_state.level - 1) % 2
+                        # ★ Lv1 と Lv2 を交互に切り替える(Junior)
+                        if course == "Junior":
+                            stage = (st.session_state.level - 1) % 2
+                        elif course == "High":
+                            stage = (st.session_state.level - 1) % 8
+                        else:
+                            stage = 0  # デフォルト（念のため）                        
 
                         filename = os.path.join(get_word_dir(course), f"words_lv{stage + 1:02d}.csv")
 
@@ -1024,8 +1029,13 @@ def page_game():
                         effect_placeholder.markdown(show_effect("levelup",0),unsafe_allow_html=True)   
 
                         # ★単語帳切り替え（通常モードと同じ）
-                        # ★ Lv1 と Lv2 を交互に切り替える
-                        stage = (st.session_state.level - 1) % 2
+                        # ★ Lv1 と Lv2 を交互に切り替える(Junior)
+                        if course == "Junior":
+                            stage = (st.session_state.level - 1) % 2
+                        elif course == "High":
+                            stage = (st.session_state.level - 1) % 8
+                        else:
+                            stage = 0  # デフォルト（念のため）   
 
                         filename = os.path.join(get_word_dir(course), f"words_lv{stage + 1:02d}.csv")
                         if os.path.exists(filename):
