@@ -1,1 +1,2 @@
-中学生向けの英単語アプリを開発します
+英単語アプリを開発します
+https://englishjuniorapp-aydplulafuzpss4arf5qvp.streamlit.app/
