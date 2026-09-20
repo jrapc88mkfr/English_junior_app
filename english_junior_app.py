@@ -26,10 +26,10 @@ if "player" not in st.session_state:
 # プレイヤーデータ
 # ---------------------------------------------------------
 players = [
-    {"name": "ゆそ", "score": 185, "color": "#6ed46e", "icon": "🧢"},
-    {"name": "しん", "score": 26, "color": "#6eb6ff", "icon": "👓"},
+    {"name": "ゆそ", "score": 185, "color": "#6ed46e", "icon": "🐶"},
+    {"name": "しん", "score": 26, "color": "#6eb6ff", "icon": "🍏"},
     {"name": "キャス", "score": 50, "color": "#c49b6e", "icon": "🐱"},
-    {"name": "ファザ", "score": 246, "color": "#ff9ad6", "icon": "🎀"},
+    {"name": "ファザ", "score": 246, "color": "#ff9ad6", "icon": "🧢"},
     {"name": "ゲスト", "score": None, "color": "#b28bff", "icon": "❔"},
 ]
 
