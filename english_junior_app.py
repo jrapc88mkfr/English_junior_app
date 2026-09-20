@@ -245,6 +245,7 @@ st.markdown(background_css, unsafe_allow_html=True)
 # game.py の本体ロジック
 # ---------------------------------------------------------
 import requests
+import streamlit.components.v1 as components
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORD_DIR = os.path.join(BASE_DIR, "Word_Data")
@@ -261,17 +262,27 @@ SOUND_WRONG_PATH = os.path.join(MUSIC_DIR, "不正解boo.mp3")
 
 
 def play_sound(path):
-    """mp3をbase64埋め込みのaudioタグでワンショット再生する"""
+    """mp3をbase64埋め込みのaudioタグでワンショット再生する
+
+    ★修正点：
+    以前は st.markdown(..., unsafe_allow_html=True) でaudioタグを埋め込んでいたが、
+    同じ音声（同じHTML文字列）を連続で鳴らそうとすると、Streamlit側が
+    「前回と同じ内容だから」とDOMを再生成せず、2回目以降は鳴らないことがあった。
+    components.html() は呼び出すたびに新しいiframeを生成するため、
+    同じ音声でも毎回確実に autoplay が発火する。
+    """
     if not path or not os.path.exists(path):
         return
     try:
         with open(path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
-        st.markdown(
-            f"""<audio autoplay="true" style="display:none">
-            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-            </audio>""",
-            unsafe_allow_html=True,
+        components.html(
+            f"""
+            <audio autoplay="true" style="display:none">
+                <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+            </audio>
+            """,
+            height=0,
         )
     except Exception:
         pass
@@ -756,7 +767,13 @@ def game_menu(words, missed, ranking):
         st.session_state.score = 0
         st.session_state.total = 0
         st.session_state.streak = 0
-        next_question()
+        # ▼ ゲーム開始時は必ずレベル1・最初の単語帳に戻す
+        st.session_state.level = 1
+        st.session_state.current_wordlist = "words_lv01.csv"
+        # ▼ current を None にしておき、次回描画時に「新しい単語帳」から出題させる
+        #   （ここで next_question() を呼ぶと、まだ古い単語帳のままなので注意）
+        st.session_state.current = None
+        st.session_state.choices = []
         st.rerun()
 
     if st.button(f"復習モード（間違えた単語：{len(missed)}）", key="review_mode"):
@@ -774,7 +791,11 @@ def game_menu(words, missed, ranking):
         st.session_state.time_score = 0
         st.session_state.time_combo = 0
         st.session_state.streak = 0
-        next_question()
+        # ▼ ゲーム開始時は必ずレベル1・最初の単語帳に戻す
+        st.session_state.level = 1
+        st.session_state.current_wordlist = "words_lv01.csv"
+        st.session_state.current = None
+        st.session_state.choices = []
         st.rerun()
 
     rows = "".join(
@@ -973,6 +994,16 @@ def page_game():
                         time.sleep(0.5)
                         missed[:] = [m for m in missed if m["english"] != word.english]
                         save_missed(missed)
+
+                        # ▼ 復習する単語がもうなければ、そのままモード選択に戻す
+                        if not missed:
+                            st.balloons()
+                            st.info("復習する単語がなくなりました！モード選択にもどります")
+                            time.sleep(1.2)
+                            st.session_state.mode = "menu"
+                            st.session_state.current = None
+                            st.session_state.choices = []
+                            st.rerun()
                 else:
                     st.error(f"不正解… 正解は「{correct}」")
                     st.session_state.review_stats[word.english] = 0
