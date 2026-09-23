@@ -262,15 +262,67 @@ SOUND_CORRECT_PATH = os.path.join(MUSIC_DIR, "正解ping.mp3")
 SOUND_WRONG_PATH = os.path.join(MUSIC_DIR, "不正解boo.mp3")
 
 
+def ensure_audio_unlock():
+    """スマホ（iOS/Android）の自動再生制限を回避するための仕込み。
+
+    モバイルブラウザは「ユーザーの直接操作（タップ等）の中で再生された
+    音」しか自動再生を許可しないことが多い。Streamlitはボタン操作→
+    サーバー処理→再描画、という非同期の流れになるため、Python側から
+    後追いで <audio autoplay> を差し込んでも、モバイルでは再生がブロック
+    されてしまう。
+
+    対策として、
+      1) 親ページに一つだけ <audio> 要素を用意しておき、
+      2) ページ内の最初のタップ/クリックのタイミングで一度だけ
+         その要素を鳴らして（すぐ一時停止）「このタブでは音声再生が
+         許可された」状態を作っておく
+      3) 以降は play_sound() で同じ要素の src を差し替えて鳴らす
+    という「オーディオのアンロック」パターンを使う。
+    ページ内のどこかを一度タップすればそれ以降の効果音は鳴るようになる。
+    """
+    components.html(
+        """
+        <script>
+        (function () {
+            const doc = window.parent.document;
+            if (doc.__claudeAppAudioUnlockSetup) { return; }
+            doc.__claudeAppAudioUnlockSetup = true;
+
+            let player = doc.getElementById('claude-app-audio-player');
+            if (!player) {
+                player = doc.createElement('audio');
+                player.id = 'claude-app-audio-player';
+                player.style.display = 'none';
+                doc.body.appendChild(player);
+            }
+            doc.__claudeAppAudioPlayer = player;
+
+            function unlock() {
+                player.play().then(function () {
+                    player.pause();
+                }).catch(function () {});
+                doc.removeEventListener('touchstart', unlock, true);
+                doc.removeEventListener('click', unlock, true);
+            }
+            doc.addEventListener('touchstart', unlock, true);
+            doc.addEventListener('click', unlock, true);
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+
 def play_sound(path):
-    """mp3をbase64埋め込みのaudioタグでワンショット再生する
+    """mp3をbase64埋め込みで再生する（スマホの自動再生制限対策版）
 
     ★修正点：
-    以前は st.markdown(..., unsafe_allow_html=True) でaudioタグを埋め込んでいたが、
-    同じ音声（同じHTML文字列）を連続で鳴らそうとすると、Streamlit側が
-    「前回と同じ内容だから」とDOMを再生成せず、2回目以降は鳴らないことがあった。
-    components.html() は呼び出すたびに新しいiframeを生成するため、
-    同じ音声でも毎回確実に autoplay が発火する。
+    以前は毎回新しい <audio autoplay> をiframeごと生成する方式だったが、
+    PC（Chrome等）では動いてもスマホ（iOS/Android）では非同期に挿入された
+    audioタグの自動再生がブロックされ、音が鳴らないことがあった。
+    ensure_audio_unlock() で用意した「アンロック済みの永続<audio>要素」の
+    src を毎回差し替えて再生する方式にすることで、一度ユーザーが画面を
+    タップした後であれば、スマホでも確実に鳴るようにしている。
     """
     if not path or not os.path.exists(path):
         return
@@ -279,9 +331,22 @@ def play_sound(path):
             b64 = base64.b64encode(f.read()).decode()
         components.html(
             f"""
-            <audio autoplay="true" style="display:none">
-                <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-            </audio>
+            <script>
+            (function () {{
+                const doc = window.parent.document;
+                let player = doc.getElementById('claude-app-audio-player');
+                if (!player) {{
+                    player = doc.createElement('audio');
+                    player.id = 'claude-app-audio-player';
+                    player.style.display = 'none';
+                    doc.body.appendChild(player);
+                }}
+                player.src = "data:audio/mp3;base64,{b64}";
+                player.currentTime = 0;
+                player.play().catch(function () {{}});
+            }})();
+            </script>
+            <!-- nonce:{time.time()} -->
             """,
             height=0,
         )
@@ -332,6 +397,9 @@ if "css_loaded" not in st.session_state:
     </style>
     """, unsafe_allow_html=True)
     st.session_state.css_loaded = True
+
+# ▼ スマホでの効果音再生対策：アンロック用リスナーを仕込む（毎回呼んでも冪等）
+ensure_audio_unlock()
 
 
 def show_effect(effect_type, review_times):
@@ -563,11 +631,24 @@ def finalize_time_attack_score(mode_suffix=""):
 # -------------------------
 # スペル入力モード：出題文生成
 # -------------------------
+def build_blank_placeholder(english):
+    """対象の英単語（複数語の場合はスペース区切り）から、
+    文字数に合わせた空欄プレースホルダーを作る。
+
+    例: "apple" -> "[_____]"
+        "How about" -> "[___ _____]"（単語ごとに区切って文字数分の _ にする）
+    """
+    parts = (english or "").split(" ")
+    blanks = ["_" * len(p) for p in parts]
+    return "[" + " ".join(blanks) + "]"
+
+
 def build_spell_prompt(word):
     """スペル入力モード用の出題文を作る。
 
     example_en があり、その中に対象の英単語が含まれていれば、
-    その部分を空欄（[_____]）にした例文を返す。
+    その部分を文字数に合わせた空欄（例: [_____] や [___ _____]）にした
+    例文を返す。
     example_en が無い／単語が見つからない場合は、日本語の意味のみを返す。
 
     戻り値: (japanese_line, blanked_en または None)
@@ -580,7 +661,8 @@ def build_spell_prompt(word):
     if example_en and english:
         pattern = re.compile(re.escape(english), re.IGNORECASE)
         if pattern.search(example_en):
-            blanked = pattern.sub("[_____]", example_en, count=1)
+            placeholder = build_blank_placeholder(english)
+            blanked = pattern.sub(lambda m: placeholder, example_en, count=1)
             example_ja = getattr(word, "example_ja", None)
             if example_ja:
                 japanese_line = example_ja
