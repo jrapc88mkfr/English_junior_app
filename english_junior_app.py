@@ -10,6 +10,7 @@ import os
 import random
 import time
 import base64
+import re
 
 # レベルアップ条件
 STREAK_TO_LEVEL_UP = 5
@@ -306,9 +307,9 @@ def missed_file_path(player_name=None, course=None):
     return os.path.join(PERSONAL_DIR, f"missed_words_{player_name}_{course}.json")
 
 
-def ranking_file_path(course=None):
+def ranking_file_path(course=None, mode_suffix=""):
     course = course or st.session_state.get("course") or COURSES[0]
-    return os.path.join(PERSONAL_DIR, f"ranking_{course}.json")
+    return os.path.join(PERSONAL_DIR, f"ranking_{course}{mode_suffix}.json")
 
 
 # Firebase（任意）
@@ -481,8 +482,8 @@ def update_review_count(missed, english, count, player_name=None, course=None):
 # -------------------------
 # ランキング保存（ローカル・コースごと）
 # -------------------------
-def load_ranking(course=None):
-    path = ranking_file_path(course)
+def load_ranking(course=None, mode_suffix=""):
+    path = ranking_file_path(course, mode_suffix)
     if not os.path.exists(path):
         return {}
     try:
@@ -492,8 +493,8 @@ def load_ranking(course=None):
         return {}
 
 
-def save_ranking(ranking, course=None):
-    path = ranking_file_path(course)
+def save_ranking(ranking, course=None, mode_suffix=""):
+    path = ranking_file_path(course, mode_suffix)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(ranking, f, ensure_ascii=False, indent=2)
 
@@ -516,43 +517,75 @@ def firebase_enabled():
     return bool(FIREBASE_DB_URL)
 
 
-def firebase_get_ranking(course=None):
+def firebase_get_ranking(course=None, mode_suffix=""):
     if not firebase_enabled():
         return None
     try:
         course = course or st.session_state.get("course") or COURSES[0]
-        url = f"{FIREBASE_DB_URL}/ranking_{course}.json"
+        url = f"{FIREBASE_DB_URL}/ranking_{course}{mode_suffix}.json"
         r = requests.get(url, timeout=5)
         return r.json() or {}
     except:
         return None
 
 
-def firebase_set_ranking(ranking, course=None):
+def firebase_set_ranking(ranking, course=None, mode_suffix=""):
     if not firebase_enabled():
         return
     try:
         course = course or st.session_state.get("course") or COURSES[0]
-        url = f"{FIREBASE_DB_URL}/ranking_{course}.json"
+        url = f"{FIREBASE_DB_URL}/ranking_{course}{mode_suffix}.json"
         requests.put(url, json=ranking, timeout=5)
     except:
         pass
 
 
-def finalize_time_attack_score():
-    """タイムアタックのスコアをランキングに確定保存する（A対応：時間切れ検知直後に必ず呼ぶ）"""
+def finalize_time_attack_score(mode_suffix=""):
+    """タイムアタックのスコアをランキングに確定保存する（A対応：時間切れ検知直後に必ず呼ぶ）
+
+    mode_suffix="" : 通常（4択）タイムアタック用ランキング
+    mode_suffix="_spell" : スペル タイムアタック用ランキング（別ファイルに分離）
+    """
     course = st.session_state.get("course")
-    ranking = load_ranking(course)
+    ranking = load_ranking(course, mode_suffix)
     player_data = st.session_state.player
     player = player_data["name"] if isinstance(player_data, dict) else player_data
     score = st.session_state.time_score
 
     if player not in ranking or score > ranking[player]:
         ranking[player] = score
-        save_ranking(ranking, course)
+        save_ranking(ranking, course, mode_suffix)
         if firebase_enabled():
-            firebase_set_ranking(ranking, course)
+            firebase_set_ranking(ranking, course, mode_suffix)
     return ranking
+
+
+# -------------------------
+# スペル入力モード：出題文生成
+# -------------------------
+def build_spell_prompt(word):
+    """スペル入力モード用の出題文を作る。
+
+    example_en があり、その中に対象の英単語が含まれていれば、
+    その部分を空欄（[_____]）にした例文を返す。
+    example_en が無い／単語が見つからない場合は、日本語の意味のみを返す。
+
+    戻り値: (japanese_line, blanked_en または None)
+    """
+    japanese_line = word.japanese
+    blanked = None
+
+    example_en = getattr(word, "example_en", None)
+    english = getattr(word, "english", None)
+    if example_en and english:
+        pattern = re.compile(re.escape(english), re.IGNORECASE)
+        if pattern.search(example_en):
+            blanked = pattern.sub("[_____]", example_en, count=1)
+            example_ja = getattr(word, "example_ja", None)
+            if example_ja:
+                japanese_line = example_ja
+
+    return japanese_line, blanked
 
 
 # -------------------------
@@ -583,6 +616,18 @@ def next_question():
             )
             # ▼ 復習回数（このセッションで未取得なら保存済みの値を初期値にする）
             st.session_state.review_stats.setdefault(word.english, m.get("review_count", 0))
+    elif st.session_state.mode in ("spell", "spell_time"):
+        # ▼ スペル入力モード（通常／タイムアタック）は WordBasic（english/japaneseを持つ単語）のみを対象にする
+        spell_words = [w for w in words if isinstance(w, WordBasic)]
+        st.session_state.spell_words = spell_words
+        if not spell_words:
+            st.session_state.current = None
+            st.session_state.choices = []
+            return
+        word = random.choice(spell_words)
+        st.session_state.current = word
+        st.session_state.choices = []
+        return
     else:
         word = random.choice(words)
 
@@ -641,6 +686,14 @@ if "words" not in st.session_state:
     st.session_state.words = []
 if "current_wordlist" not in st.session_state:
     st.session_state.current_wordlist = "words_lv01.csv"
+if "spell_words" not in st.session_state:
+    st.session_state.spell_words = []
+if "spell_seq" not in st.session_state:
+    st.session_state.spell_seq = 0
+if "spell_awaiting_next" not in st.session_state:
+    st.session_state.spell_awaiting_next = False
+if "spell_last_result" not in st.session_state:
+    st.session_state.spell_last_result = None
 
 
 def reset_game_state(keep_course=True):
@@ -657,6 +710,10 @@ def reset_game_state(keep_course=True):
     st.session_state.level = 1
     st.session_state.streak = 0
     st.session_state.current_wordlist = "words_lv01.csv"
+    st.session_state.spell_words = []
+    st.session_state.spell_seq = 0
+    st.session_state.spell_awaiting_next = False
+    st.session_state.spell_last_result = None
     if not keep_course:
         st.session_state.course = None
 
@@ -798,6 +855,37 @@ def game_menu(words, missed, ranking):
         st.session_state.choices = []
         st.rerun()
 
+    if st.button("✏️ スペル入力モード", key="spell_mode"):
+        st.session_state.mode = "spell"
+        st.session_state.score = 0
+        st.session_state.total = 0
+        st.session_state.streak = 0
+        # ▼ ゲーム開始時は必ずレベル1・最初の単語帳に戻す
+        st.session_state.level = 1
+        st.session_state.current_wordlist = "words_lv01.csv"
+        st.session_state.current = None
+        st.session_state.choices = []
+        st.session_state.spell_seq = 0
+        st.session_state.spell_awaiting_next = False
+        st.session_state.spell_last_result = None
+        st.rerun()
+
+    if st.button("✏️⏱️ スペル タイムアタック（5分）", key="spell_time_mode"):
+        st.session_state.mode = "spell_time"
+        st.session_state.time_start = time.time()
+        st.session_state.time_score = 0
+        st.session_state.time_combo = 0
+        st.session_state.streak = 0
+        # ▼ ゲーム開始時は必ずレベル1・最初の単語帳に戻す
+        st.session_state.level = 1
+        st.session_state.current_wordlist = "words_lv01.csv"
+        st.session_state.current = None
+        st.session_state.choices = []
+        st.session_state.spell_seq = 0
+        st.session_state.spell_awaiting_next = False
+        st.session_state.spell_last_result = None
+        st.rerun()
+
     rows = "".join(
         f"<div style='display:flex; justify-content:space-between; padding:3px 0;'>"
         f"<span>{'🥇🥈🥉'[i:i+1] if i < 3 else '　'} {p}</span><span>{s}点</span></div>"
@@ -809,6 +897,23 @@ def game_menu(words, missed, ranking):
         <div class="score-panel" style="margin-top:10px;">
             <div style="font-weight:900; margin-bottom:4px;">🏆 {COURSE_LABELS[course]}ランキング</div>
             {rows}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    spell_ranking = load_ranking(course, "_spell")
+    spell_rows = "".join(
+        f"<div style='display:flex; justify-content:space-between; padding:3px 0;'>"
+        f"<span>{'🥇🥈🥉'[i:i+1] if i < 3 else '　'} {p}</span><span>{s}点</span></div>"
+        for i, (p, s) in enumerate(sorted(spell_ranking.items(), key=lambda x: -x[1]))
+    ) or "<div style='color:#888;'>まだ記録がありません</div>"
+
+    st.markdown(
+        f"""
+        <div class="score-panel" style="margin-top:6px;">
+            <div style="font-weight:900; margin-bottom:4px;">🏆✏️ {COURSE_LABELS[course]}スペル タイムアタックランキング</div>
+            {spell_rows}
         </div>
         """,
         unsafe_allow_html=True
@@ -884,6 +989,23 @@ def page_game():
         next_question()
         word = st.session_state.current
 
+    # ▼ スペル入力モードで出題できる単語が無い場合はここで止める
+    if word is None:
+        if st.session_state.mode in ("spell", "spell_time"):
+            st.warning("この単語帳にはスペル入力できる単語がありません。")
+        else:
+            st.warning("出題できる単語がありません。")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("⬅️ もどる", key="back_to_menu_no_word"):
+                st.session_state.mode = "menu"
+                st.rerun()
+        with col_b:
+            if st.button("🔀 コース変更", key="change_course_no_word"):
+                reset_game_state(keep_course=False)
+                st.rerun()
+        return
+
     col_back, col_level = st.columns([1, 3])
     with col_back:
         if st.button("⬅️ もどる", key="back_to_menu_ingame"):
@@ -897,6 +1019,193 @@ def page_game():
             f"</div>",
             unsafe_allow_html=True
         )
+
+    # -------------------------
+    # スペル入力モード（通常／タイムアタック共通）
+    # 日本語の意味 → 英単語のスペルを入力する
+    # -------------------------
+    if st.session_state.mode in ("spell", "spell_time"):
+        is_time_attack = st.session_state.mode == "spell_time"
+
+        japanese_line, blanked_en = build_spell_prompt(word)
+        spell_example_html = f"<div class='example'>✏️ {blanked_en}</div>" if blanked_en else ""
+
+        st.markdown(
+            f"""
+            <div class="question-card">
+                <div style="font-size:14px; color:#888; font-weight:700;">問題（日本語の意味）</div>
+                <div class="en" style="font-size:28px;">{japanese_line}</div>
+                {spell_example_html}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        effect_placeholder = st.empty()
+
+        if st.session_state.spell_awaiting_next:
+            # ▼ 不正解のときは、正解のスペルを表示したまま「次へ」を押すまで進めない
+            result = st.session_state.spell_last_result or {}
+            if result.get("correct"):
+                st.success(result.get("message", "正解！"))
+                effect_placeholder.markdown(show_effect("correct", 0), unsafe_allow_html=True)
+            else:
+                st.error(result.get("message", "不正解…"))
+                effect_placeholder.markdown(show_effect("wrong", 0), unsafe_allow_html=True)
+
+            if st.button("👉 次の問題へ", key=f"spell_next_{st.session_state.spell_seq}"):
+                st.session_state.spell_awaiting_next = False
+                st.session_state.spell_last_result = None
+                st.session_state.spell_seq += 1
+                next_question()
+                st.rerun()
+
+        else:
+            with st.form(key=f"spell_form_{st.session_state.spell_seq}", clear_on_submit=True):
+                user_input = st.text_input(
+                    "スペルを入力してね（英語）",
+                    key=f"spell_input_{st.session_state.spell_seq}"
+                )
+                submitted = st.form_submit_button("こたえる")
+
+            # ▼ D対応：入力欄に自動でカーソルを合わせる（毎回クリックしなくて良いようにする）
+            #    ・setTimeout一発だけだと、問題2問目以降は要素の描画が
+            #      間に合わずフォーカスに失敗することがあるため、
+            #      見つかるまで繰り返し探す方式にする。
+            #    ・スクリプトの中身に spell_seq を埋め込み、
+            #      前回と完全に同じHTMLにならないようにする
+            #      （同一内容だとブラウザ/Streamlit側でiframeの
+            #        再実行がスキップされることがあるため）。
+            components.html(
+                f"""
+                <script>
+                (function () {{
+                    const targetLabel = "スペルを入力してね（英語）";
+                    function tryFocus() {{
+                        const doc = window.parent.document;
+                        const inputs = doc.querySelectorAll('input[type="text"]');
+                        for (const el of inputs) {{
+                            if (el.getAttribute('aria-label') === targetLabel) {{
+                                el.focus();
+                                return true;
+                            }}
+                        }}
+                        return false;
+                    }}
+                    if (tryFocus()) {{ return; }}
+                    let tries = 0;
+                    const timer = setInterval(function () {{
+                        tries += 1;
+                        if (tryFocus() || tries > 40) {{
+                            clearInterval(timer);
+                        }}
+                    }}, 100);
+                }})();
+                </script>
+                <!-- spell_seq:{st.session_state.spell_seq} -->
+                """,
+                height=0,
+            )
+
+            if submitted:
+                if is_time_attack:
+                    elapsed = time.time() - st.session_state.time_start
+                    if elapsed >= 300:
+                        finalize_time_attack_score(mode_suffix="_spell")
+                        st.session_state.mode = "menu"
+                        st.rerun()
+
+                correct = word.english or ""
+                st.session_state.total += 1
+                is_correct = user_input.strip().lower() == correct.strip().lower()
+
+                if is_correct:
+                    st.session_state.streak += 1
+                    if is_time_attack:
+                        st.session_state.time_combo += 1
+                        bonus = st.session_state.time_combo // 5
+                        gained = 1 + bonus
+                        st.session_state.time_score += gained
+                        message = f"正解！ +{gained}点（コンボ x{st.session_state.time_combo}）"
+                    else:
+                        st.session_state.score += 1
+                        message = "正解！"
+
+                    play_sound(SOUND_CORRECT_PATH)
+
+                    if st.session_state.streak >= STREAK_TO_LEVEL_UP:
+                        st.session_state.streak = 0
+                        st.session_state.level += 1
+
+                        # ★ Lv1 と Lv2 を交互に切り替える(Junior)
+                        if course == "Junior":
+                            stage = (st.session_state.level - 1) % 2
+                        elif course == "High":
+                            stage = (st.session_state.level - 1) % 8
+                        else:
+                            stage = 0  # デフォルト（念のため）
+
+                        spell_filename = os.path.join(get_word_dir(course), f"words_lv{stage + 1:02d}.csv")
+                        if os.path.exists(spell_filename):
+                            new_words = load_words(spell_filename)
+                            if new_words:
+                                st.session_state.words = new_words
+                                st.session_state.current_wordlist = os.path.basename(spell_filename)
+                                message += f"／単語帳を {st.session_state.current_wordlist} に変更しました"
+
+                    # ▼ 正解のときはテンポよく次の問題へ進む（効果音が鳴りきるまで少し待つ）
+                    st.success(message)
+                    effect_placeholder.empty()
+                    effect_placeholder.markdown(show_effect("correct", 0), unsafe_allow_html=True)
+                    time.sleep(1.0)
+                    st.session_state.spell_seq += 1
+                    next_question()
+                    effect_placeholder.empty()
+                    st.rerun()
+
+                else:
+                    st.session_state.streak = 0
+                    add_or_reset_missed(missed, word)
+                    play_sound(SOUND_WRONG_PATH)
+
+                    if is_time_attack:
+                        st.session_state.time_combo = 0
+                        st.session_state.time_score -= 1
+
+                    # ▼ E対応：不正解のときは正解のスペルを表示したまま止め、
+                    #    「次の問題へ」ボタンを押すまで自動では進めない
+                    #    （rerun前に少し待つことで、効果音が鳴りきる前にiframeが
+                    #      消えてしまうのを防ぐ）
+                    st.session_state.spell_last_result = {
+                        "correct": False,
+                        "message": f"不正解… 正解は「{correct}」",
+                    }
+                    time.sleep(1.0)
+                    st.session_state.spell_awaiting_next = True
+                    st.rerun()
+
+        # -------------------------
+        # スコア表示
+        # -------------------------
+        if is_time_attack:
+            elapsed = time.time() - st.session_state.time_start
+            remain = max(0, 300 - int(elapsed))
+            st.markdown(
+                f"<div class='score-panel'>⏱️ 残り時間：{remain//60}:{remain%60:02d}"
+                f"　｜　スコア：{st.session_state.time_score}"
+                f"　｜　コンボ：x{st.session_state.time_combo}</div>",
+                unsafe_allow_html=True
+            )
+            # ▼ 回答待ち（正解表示中）でなければ、時間切れをここでも確定保存する
+            if remain <= 0 and not st.session_state.spell_awaiting_next:
+                finalize_time_attack_score(mode_suffix="_spell")
+                st.session_state.mode = "menu"
+                st.rerun()
+        else:
+            st.markdown(
+                f"<div class='score-panel'>✅ 正解数：{st.session_state.score} / {st.session_state.total}</div>",
+                unsafe_allow_html=True
+            )
+        return
 
     example_html = ""
     if getattr(word, "example_en", None):
