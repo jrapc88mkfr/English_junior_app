@@ -102,11 +102,11 @@ div[data-testid="stMarkdownContainer"] p {
     box-shadow: 0 1px 0 rgba(0,0,0,0.15);
 }
 
-/* ---- 4択の選択肢ボタン：遠くからでも見やすいように文字を大きく ---- */
+/* ---- 4択の選択肢ボタン：遠くからでも見やすいように文字を大きく、余白は小さめに ---- */
 div[class*="st-key-choice_btn_"] .stButton>button {
-    font-size: 30px;
-    padding: 0.7em 1.2em;
-    line-height: 1.3;
+    font-size: 36px;
+    padding: 0.35em 0.4em;
+    line-height: 1.2;
 }
 
 /* ---- プレイヤー選択カード ---- */
@@ -241,7 +241,7 @@ div[class*="st-key-choice_btn_"] .stButton>button {
     .question-card .en { font-size: 30px; }
     .question-card .example { font-size: 14px; margin-top: 4px; }
     .stButton>button { padding: 0.55em 0.8em; font-size: 22px; }
-    div[class*="st-key-choice_btn_"] .stButton>button { font-size: 26px; padding: 0.6em 0.8em; }
+    div[class*="st-key-choice_btn_"] .stButton>button { font-size: 30px; padding: 0.3em 0.35em; }
     .score-panel { padding: 7px 10px; font-size: 15px; margin-top: 4px; }
     .level-badge { font-size: 15px; padding: 4px 12px; }
     .wordbook-badge, .course-badge { font-size: 12px; padding: 3px 10px; }
@@ -636,18 +636,38 @@ def finalize_time_attack_score(mode_suffix=""):
     return ranking
 
 
+def save_best_score(score, course=None, mode_suffix=""):
+    """通常モード／スペル入力モード（タイムアタックでない）など、
+    正解するたびに伸びていくスコアを、そのつど自己ベストとしてランキングに
+    保存する（1問正解するごとに呼んでよいように、ハイスコア更新時だけ書き込む）。
+
+    タイムアタック系は finalize_time_attack_score() を使うのでこちらは使わない。
+    """
+    course = course or st.session_state.get("course")
+    ranking = load_ranking(course, mode_suffix)
+    player_data = st.session_state.player
+    player = player_data["name"] if isinstance(player_data, dict) else player_data
+
+    if player not in ranking or score > ranking[player]:
+        ranking[player] = score
+        save_ranking(ranking, course, mode_suffix)
+        if firebase_enabled():
+            firebase_set_ranking(ranking, course, mode_suffix)
+    return ranking
+
+
 # -------------------------
 # スペル入力モード：出題文生成
 # -------------------------
 def build_blank_placeholder(english):
     """対象の英単語（複数語の場合はスペース区切り）から、
-    文字数に合わせた空欄プレースホルダーを作る。
+    頭文字だけ見せて残りを文字数分の空欄にしたプレースホルダーを作る。
 
-    例: "apple" -> "[_____]"
-        "How about" -> "[___ _____]"（単語ごとに区切って文字数分の _ にする）
+    例: "apple" -> "[a____]"
+        "How about" -> "[H__ a____]"（単語ごとに区切って、頭文字＋残り文字数分の _ にする）
     """
     parts = (english or "").split(" ")
-    blanks = ["_" * len(p) for p in parts]
+    blanks = [(p[0] + "_" * (len(p) - 1)) if p else "" for p in parts]
     return "[" + " ".join(blanks) + "]"
 
 
@@ -655,17 +675,20 @@ def build_spell_prompt(word):
     """スペル入力モード用の出題文を作る。
 
     example_en があり、その中に対象の英単語が含まれていれば、
-    その部分を文字数に合わせた空欄（例: [_____] や [___ _____]）にした
+    その部分を頭文字＋文字数分の空欄（例: [a____] や [H__ a____]）にした
     例文を返す。
-    example_en が無い／単語が見つからない場合は、日本語の意味のみを返す。
+    example_en が無い／単語が見つからない場合でも、単語そのものの
+    頭文字＋空欄ヒント（word_hint）は必ず返す。
 
-    戻り値: (japanese_line, blanked_en または None)
+    戻り値: (japanese_line, blanked_en または None, word_hint または None)
     """
     japanese_line = word.japanese
     blanked = None
 
     example_en = getattr(word, "example_en", None)
     english = getattr(word, "english", None)
+    word_hint = build_blank_placeholder(english) if english else None
+
     if example_en and english:
         pattern = re.compile(re.escape(english), re.IGNORECASE)
         if pattern.search(example_en):
@@ -675,7 +698,7 @@ def build_spell_prompt(word):
             if example_ja:
                 japanese_line = example_ja
 
-    return japanese_line, blanked
+    return japanese_line, blanked, word_hint
 
 
 # -------------------------
@@ -1122,8 +1145,9 @@ def page_game():
     if st.session_state.mode in ("spell", "spell_time"):
         is_time_attack = st.session_state.mode == "spell_time"
 
-        japanese_line, blanked_en = build_spell_prompt(word)
-        spell_example_html = f"<div class='example'>✏️ {blanked_en}</div>" if blanked_en else ""
+        japanese_line, blanked_en, word_hint = build_spell_prompt(word)
+        spell_hint_text = blanked_en or word_hint
+        spell_example_html = f"<div class='example'>✏️ {spell_hint_text}</div>" if spell_hint_text else ""
 
         st.markdown(
             f"""
@@ -1223,6 +1247,7 @@ def page_game():
                         message = f"正解！ +{gained}点（コンボ x{st.session_state.time_combo}）"
                     else:
                         st.session_state.score += 1
+                        save_best_score(st.session_state.score, course, mode_suffix="_spell_normal")
                         message = "正解！"
 
                     play_sound(SOUND_CORRECT_PATH)
@@ -1335,6 +1360,7 @@ def page_game():
                 if c == correct:
                     st.session_state.score += 1
                     st.session_state.streak += 1
+                    save_best_score(st.session_state.score, course)
                     st.success("正解！")
                     # 演出＋効果音（共通化）
                     effect_placeholder.empty()
