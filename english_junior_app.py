@@ -104,7 +104,7 @@ div[data-testid="stMarkdownContainer"] p {
 
 /* ---- 4択の選択肢ボタン：遠くからでも見やすいように文字を大きく、余白は小さめに ---- */
 div[class*="st-key-choice_btn_"] .stButton>button {
-    font-size: 36px;
+    font-size: 40px;
     padding: 0.35em 0.4em;
     line-height: 1.2;
 }
@@ -241,7 +241,7 @@ div[class*="st-key-choice_btn_"] .stButton>button {
     .question-card .en { font-size: 30px; }
     .question-card .example { font-size: 14px; margin-top: 4px; }
     .stButton>button { padding: 0.55em 0.8em; font-size: 22px; }
-    div[class*="st-key-choice_btn_"] .stButton>button { font-size: 30px; padding: 0.3em 0.35em; }
+    div[class*="st-key-choice_btn_"] .stButton>button { font-size: 34px; padding: 0.3em 0.35em; }
     .score-panel { padding: 7px 10px; font-size: 15px; margin-top: 4px; }
     .level-badge { font-size: 15px; padding: 4px 12px; }
     .wordbook-badge, .course-badge { font-size: 12px; padding: 3px 10px; }
@@ -841,12 +841,15 @@ def page_select():
     cols = st.columns(3)
     for i, p in enumerate(players):
         with cols[i % 3]:
-            # ▼ C対応：中学生／高校生それぞれの最高得点を別々に表示
+            # ▼ C対応：中学生／高校生それぞれの「タイムアタック系」最高得点を表示
+            #    （通常タイムアタックとスペルタイムアタックのうち高い方を採用）
             score_lines = []
             for c in COURSES:
-                rk = load_ranking(c)
-                s = rk.get(p["name"])
-                s_text = str(s) if s is not None else "記録なし"
+                ta_normal = load_ranking(c).get(p["name"])
+                ta_spell = load_ranking(c, "_spell").get(p["name"])
+                candidates = [v for v in (ta_normal, ta_spell) if v is not None]
+                best = max(candidates) if candidates else None
+                s_text = str(best) if best is not None else "記録なし"
                 score_lines.append(f"{COURSE_ICONS[c]}{COURSE_LABELS[c]}: {s_text}")
             score_text = "　".join(score_lines)
 
@@ -1244,6 +1247,8 @@ def page_game():
                         bonus = st.session_state.time_combo // 5
                         gained = 1 + bonus
                         st.session_state.time_score += gained
+                        # ★2対応：5分経過を待たず、1問ごとにその場でランキングJSONへ保存する
+                        save_best_score(st.session_state.time_score, course, mode_suffix="_spell")
                         message = f"正解！ +{gained}点（コンボ x{st.session_state.time_combo}）"
                     else:
                         st.session_state.score += 1
@@ -1290,6 +1295,8 @@ def page_game():
                     if is_time_attack:
                         st.session_state.time_combo = 0
                         st.session_state.time_score -= 1
+                        # ★2対応：5分経過を待たず、1問ごとにその場でランキングJSONへ保存する
+                        save_best_score(st.session_state.time_score, course, mode_suffix="_spell")
 
                     # ▼ E対応：不正解のときは正解のスペルを表示したまま止め、
                     #    「次の問題へ」ボタンを押すまで自動では進めない
@@ -1360,7 +1367,7 @@ def page_game():
                 if c == correct:
                     st.session_state.score += 1
                     st.session_state.streak += 1
-                    save_best_score(st.session_state.score, course)
+                    save_best_score(st.session_state.score, course, mode_suffix="_normal")
                     st.success("正解！")
                     # 演出＋効果音（共通化）
                     effect_placeholder.empty()
@@ -1516,6 +1523,11 @@ def page_game():
                     effect_html = show_effect("wrong", 0)
                     effect_placeholder.markdown(effect_html, unsafe_allow_html=True)
                     play_sound(SOUND_WRONG_PATH)
+
+                # ★2対応：5分経過を待たず、1問ごとにその場でランキングJSONへ保存する
+                #   （5分経過時にしか保存していなかったため、最後までやらないと
+                #     ranking_<コース>.json が作られない問題があった）
+                save_best_score(st.session_state.time_score, course)
                 time.sleep(0.5)  
 
             next_question()
