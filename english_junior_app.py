@@ -102,6 +102,13 @@ div[data-testid="stMarkdownContainer"] p {
     box-shadow: 0 1px 0 rgba(0,0,0,0.15);
 }
 
+/* ---- 4択の選択肢ボタン：遠くからでも見やすいように文字を大きく ---- */
+div[class*="st-key-choice_btn_"] .stButton>button {
+    font-size: 30px;
+    padding: 0.7em 1.2em;
+    line-height: 1.3;
+}
+
 /* ---- プレイヤー選択カード ---- */
 .pixel-card {
     padding: 14px;
@@ -234,6 +241,7 @@ div[data-testid="stMarkdownContainer"] p {
     .question-card .en { font-size: 30px; }
     .question-card .example { font-size: 14px; margin-top: 4px; }
     .stButton>button { padding: 0.55em 0.8em; font-size: 22px; }
+    div[class*="st-key-choice_btn_"] .stButton>button { font-size: 26px; padding: 0.6em 0.8em; }
     .score-panel { padding: 7px 10px; font-size: 15px; margin-top: 4px; }
     .level-badge { font-size: 15px; padding: 4px 12px; }
     .wordbook-badge, .course-badge { font-size: 12px; padding: 3px 10px; }
@@ -810,9 +818,14 @@ def page_select():
     cols = st.columns(3)
     for i, p in enumerate(players):
         with cols[i % 3]:
-            # ▼ A対応：固定値ではなく実際のランキングファイルから最高得点を表示
-            best = best_score_for_player(p["name"])
-            score_text = f"Hi-Score: {best}" if best is not None else "記録なし"
+            # ▼ C対応：中学生／高校生それぞれの最高得点を別々に表示
+            score_lines = []
+            for c in COURSES:
+                rk = load_ranking(c)
+                s = rk.get(p["name"])
+                s_text = str(s) if s is not None else "記録なし"
+                score_lines.append(f"{COURSE_ICONS[c]}{COURSE_LABELS[c]}: {s_text}")
+            score_text = "　".join(score_lines)
 
             if st.button(p["name"], key=f"player_select_{i}"):
                 st.session_state.player = p
@@ -824,7 +837,7 @@ def page_select():
             <div class="pixel-card" style="background-color:{p['color']}">
                 <div class="icon">{p['icon']}</div>
                 {p['name']}<br>
-                <span style="font-size:16px;">{score_text}</span>
+                <span style="font-size:15px;">{score_text}</span>
             </div>
             """
             st.markdown(card_html, unsafe_allow_html=True)
@@ -1310,8 +1323,8 @@ def page_game():
     # -------------------------
     # 選択肢
     # -------------------------
-    for c in st.session_state.choices:
-        if st.button(c):
+    for _choice_i, c in enumerate(st.session_state.choices):
+        if st.button(c, key=f"choice_btn_{_choice_i}"):
             correct = word.correct_choice()
             st.session_state.total += 1
 
