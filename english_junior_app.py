@@ -103,8 +103,9 @@ div[data-testid="stMarkdownContainer"] p {
 }
 
 /* ---- 4択の選択肢ボタン：遠くからでも見やすいように文字を大きく、余白は小さめに ---- */
+/* ★1.5倍対応：40px→60px */
 div[class*="st-key-choice_btn_"] .stButton>button {
-    font-size: 40px;
+    font-size: 60px;
     padding: 0.35em 0.4em;
     line-height: 1.2;
 }
@@ -241,7 +242,7 @@ div[class*="st-key-choice_btn_"] .stButton>button {
     .question-card .en { font-size: 30px; }
     .question-card .example { font-size: 14px; margin-top: 4px; }
     .stButton>button { padding: 0.55em 0.8em; font-size: 22px; }
-    div[class*="st-key-choice_btn_"] .stButton>button { font-size: 34px; padding: 0.3em 0.35em; }
+    div[class*="st-key-choice_btn_"] .stButton>button { font-size: 51px; padding: 0.3em 0.35em; }
     .score-panel { padding: 7px 10px; font-size: 15px; margin-top: 4px; }
     .level-badge { font-size: 15px; padding: 4px 12px; }
     .wordbook-badge, .course-badge { font-size: 12px; padding: 3px 10px; }
@@ -385,8 +386,18 @@ def ranking_file_path(course=None, mode_suffix=""):
     return os.path.join(PERSONAL_DIR, f"ranking_{course}{mode_suffix}.json")
 
 
-# Firebase（任意）
-FIREBASE_DB_URL = ""  # 例: "https://xxxx-default-rtdb.firebaseio.com"
+# Firebase（任意・記録の永続化に必須）
+# ★2対応：Streamlit Community Cloud はアプリが再起動（スリープ復帰・再デプロイ等）すると
+#   コンテナがgitの状態にリセットされ、実行中にローカルへ書き込んだ
+#   Personal_Data/*.json は消えてしまう（＝ローカルファイル保存だけでは記録は残せない）。
+#   これを防ぐには、Firebase Realtime Database等の外部ストレージに保存する必要がある。
+#   URLはソースコードに直書きせず、Streamlit Cloudの「Settings > Secrets」に
+#   FIREBASE_DB_URL = "https://xxxx-default-rtdb.firebaseio.com"
+#   の形で設定する（.streamlit/secrets.toml をローカルで使う場合も同様のキー名）。
+try:
+    FIREBASE_DB_URL = st.secrets.get("FIREBASE_DB_URL", "")
+except Exception:
+    FIREBASE_DB_URL = ""
 
 if "css_loaded" not in st.session_state:
     st.markdown("""
@@ -614,6 +625,28 @@ def firebase_set_ranking(ranking, course=None, mode_suffix=""):
         requests.put(url, json=ranking, timeout=5)
     except:
         pass
+
+
+def merged_ranking(course=None, mode_suffix=""):
+    """ローカルのランキングJSONとFirebase（設定されていれば）をマージして返す。
+
+    ★2対応：Streamlit Community Cloudはアプリ再起動でローカルのJSONファイルが
+    消えてしまうため、表示時には必ずこの関数を使い、Firebase側に残っている
+    記録があればそれをローカルに復元してから返す。
+    """
+    ranking = load_ranking(course, mode_suffix)
+    if firebase_enabled():
+        cloud = firebase_get_ranking(course, mode_suffix)
+        if cloud:
+            changed = False
+            for p, score in cloud.items():
+                if p not in ranking or score > ranking[p]:
+                    ranking[p] = score
+                    changed = True
+            if changed:
+                # ▼ 復元した記録をローカルにも書き戻しておく（次回以降の読み込みを軽くする）
+                save_ranking(ranking, course, mode_suffix)
+    return ranking
 
 
 def finalize_time_attack_score(mode_suffix=""):
@@ -845,8 +878,8 @@ def page_select():
             #    （通常タイムアタックとスペルタイムアタックのうち高い方を採用）
             score_lines = []
             for c in COURSES:
-                ta_normal = load_ranking(c).get(p["name"])
-                ta_spell = load_ranking(c, "_spell").get(p["name"])
+                ta_normal = merged_ranking(c).get(p["name"])
+                ta_spell = merged_ranking(c, "_spell").get(p["name"])
                 candidates = [v for v in (ta_normal, ta_spell) if v is not None]
                 best = max(candidates) if candidates else None
                 s_text = str(best) if best is not None else "記録なし"
@@ -890,11 +923,12 @@ def page_course_select():
     cols = st.columns(2)
     for i, c in enumerate(COURSES):
         with cols[i]:
-            best = None
-            rk = load_ranking(c)
-            if player_name in rk:
-                best = rk[player_name]
-            score_text = f"Hi-Score: {best}" if best is not None else "記録なし"
+            # ★3対応：人選択画面と同じく「タイムアタック（4択／スペルの高い方）」の記録を表示する
+            ta_normal = merged_ranking(c).get(player_name)
+            ta_spell = merged_ranking(c, "_spell").get(player_name)
+            candidates = [v for v in (ta_normal, ta_spell) if v is not None]
+            best = max(candidates) if candidates else None
+            score_text = f"🏆タイムアタック: {best}" if best is not None else "記録なし"
 
             if st.button(f"{COURSE_ICONS[c]} {COURSE_LABELS[c]}", key=f"course_select_{c}"):
                 st.session_state.course = c
@@ -1023,7 +1057,7 @@ def game_menu(words, missed, ranking):
         unsafe_allow_html=True
     )
 
-    spell_ranking = load_ranking(course, "_spell")
+    spell_ranking = merged_ranking(course, "_spell")
     spell_rows = "".join(
         f"<div style='display:flex; justify-content:space-between; padding:3px 0;'>"
         f"<span>{'🥇🥈🥉'[i:i+1] if i < 3 else '　'} {p}</span><span>{s}点</span></div>"
@@ -1067,15 +1101,7 @@ def page_game():
     st.session_state.words = load_words(filename)
     words = st.session_state.words
     missed = load_missed()
-    ranking = load_ranking(course)
-
-    if firebase_enabled():
-        cloud = firebase_get_ranking(course)
-        if cloud:
-            for p, score in cloud.items():
-                if p not in ranking or score > ranking[p]:
-                    ranking[p] = score
-            save_ranking(ranking, course)
+    ranking = merged_ranking(course)
 
     # ▼ 単語データが無い場合はメニュー表示より先にチェックする
     #    （メニューの各モードボタンが next_question() を呼び、
