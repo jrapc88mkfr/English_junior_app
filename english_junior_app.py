@@ -103,13 +103,13 @@ div[data-testid="stMarkdownContainer"] p {
 }
 
 /* ---- 4択の選択肢ボタン：遠くからでも見やすいように文字を大きく、余白は小さめに ---- */
-/* ★1.5倍対応→さらに1.5倍：40px→60px→90px */
+/* ★1.5倍対応→さらに1.5倍：40px→60px→90px-->40px */
 /* ボタン内の文字は実際には<button>の中の<p>タグに描画されるため、
    button自体だけでなくp要素にも直接指定し、Streamlit側のデフォルト
    スタイルに打ち消されないよう!importantで強制する */
 div[class*="st-key-choice_btn_"] .stButton>button,
 div[class*="st-key-choice_btn_"] .stButton>button p {
-    font-size: 90px !important;
+    font-size: 40px !important;
     padding: 0.35em 0.4em;
     line-height: 1.2;
 }
@@ -247,7 +247,7 @@ div[class*="st-key-choice_btn_"] .stButton>button p {
     .question-card .example { font-size: 14px; margin-top: 4px; }
     .stButton>button { padding: 0.55em 0.8em; font-size: 22px; }
     div[class*="st-key-choice_btn_"] .stButton>button,
-    div[class*="st-key-choice_btn_"] .stButton>button p { font-size: 77px !important; padding: 0.3em 0.35em; }
+    div[class*="st-key-choice_btn_"] .stButton>button p { font-size: 30px !important; padding: 0.3em 0.35em; }
     .score-panel { padding: 7px 10px; font-size: 15px; margin-top: 4px; }
     .level-badge { font-size: 15px; padding: 4px 12px; }
     .wordbook-badge, .course-badge { font-size: 12px; padding: 3px 10px; }
