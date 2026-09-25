@@ -398,6 +398,8 @@ try:
     FIREBASE_DB_URL = st.secrets.get("FIREBASE_DB_URL", "")
 except Exception:
     FIREBASE_DB_URL = ""
+# ▼ Secretsに末尾スラッシュ付きで貼られていても二重スラッシュにならないようにする
+FIREBASE_DB_URL = FIREBASE_DB_URL.rstrip("/")
 
 if "css_loaded" not in st.session_state:
     st.markdown("""
