@@ -103,9 +103,9 @@ div[data-testid="stMarkdownContainer"] p {
 }
 
 /* ---- 4択の選択肢ボタン：遠くからでも見やすいように文字を大きく、余白は小さめに ---- */
-/* ★1.5倍対応：40px→60px */
+/* ★1.5倍対応→さらに1.5倍：40px→60px→90px */
 div[class*="st-key-choice_btn_"] .stButton>button {
-    font-size: 60px;
+    font-size: 90px;
     padding: 0.35em 0.4em;
     line-height: 1.2;
 }
@@ -242,7 +242,7 @@ div[class*="st-key-choice_btn_"] .stButton>button {
     .question-card .en { font-size: 30px; }
     .question-card .example { font-size: 14px; margin-top: 4px; }
     .stButton>button { padding: 0.55em 0.8em; font-size: 22px; }
-    div[class*="st-key-choice_btn_"] .stButton>button { font-size: 51px; padding: 0.3em 0.35em; }
+    div[class*="st-key-choice_btn_"] .stButton>button { font-size: 77px; padding: 0.3em 0.35em; }
     .score-panel { padding: 7px 10px; font-size: 15px; margin-top: 4px; }
     .level-badge { font-size: 15px; padding: 4px 12px; }
     .wordbook-badge, .course-badge { font-size: 12px; padding: 3px 10px; }
@@ -577,7 +577,11 @@ def load_ranking(course=None, mode_suffix=""):
         return {}
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        # ▼ 過去の不具合等で紛れ込んだ非数値エントリ（例: "error"キー）を除外して自動修復する
+        return {p: s for p, s in data.items() if isinstance(s, (int, float)) and not isinstance(s, bool)}
     except:
         return {}
 
@@ -613,7 +617,16 @@ def firebase_get_ranking(course=None, mode_suffix=""):
         course = course or st.session_state.get("course") or COURSES[0]
         url = f"{FIREBASE_DB_URL}/ranking_{course}{mode_suffix}.json"
         r = requests.get(url, timeout=5)
-        return r.json() or {}
+        if r.status_code != 200:
+            # ▼ 権限エラーなど（例: ルール未公開）はデータなし扱いにする
+            return None
+        data = r.json()
+        if not isinstance(data, dict):
+            return None
+        # ▼ Firebaseがエラー内容（例: {"error": "Permission denied"}）を
+        #    返してきた場合、それを誤ってスコアとして取り込まないよう、
+        #    値が数値になっている項目だけを採用する
+        return {p: s for p, s in data.items() if isinstance(s, (int, float)) and not isinstance(s, bool)}
     except:
         return None
 
@@ -873,6 +886,13 @@ def page_select():
     st.markdown("<div class='name-title'>だれがやる？</div>", unsafe_allow_html=True)
     st.write("")
 
+    # ▼ ランキングはコースごとに1回だけ取得する（プレイヤーごとに取得し直すと通信回数が
+    #   5人×2コース×2種類＝最大20回になってしまい、その分アプリが重くなっていたため）
+    rankings_by_course = {
+        c: (merged_ranking(c), merged_ranking(c, "_spell"))
+        for c in COURSES
+    }
+
     cols = st.columns(3)
     for i, p in enumerate(players):
         with cols[i % 3]:
@@ -880,8 +900,9 @@ def page_select():
             #    （通常タイムアタックとスペルタイムアタックのうち高い方を採用）
             score_lines = []
             for c in COURSES:
-                ta_normal = merged_ranking(c).get(p["name"])
-                ta_spell = merged_ranking(c, "_spell").get(p["name"])
+                ta_normal_rk, ta_spell_rk = rankings_by_course[c]
+                ta_normal = ta_normal_rk.get(p["name"])
+                ta_spell = ta_spell_rk.get(p["name"])
                 candidates = [v for v in (ta_normal, ta_spell) if v is not None]
                 best = max(candidates) if candidates else None
                 s_text = str(best) if best is not None else "記録なし"
@@ -1103,7 +1124,6 @@ def page_game():
     st.session_state.words = load_words(filename)
     words = st.session_state.words
     missed = load_missed()
-    ranking = merged_ranking(course)
 
     # ▼ 単語データが無い場合はメニュー表示より先にチェックする
     #    （メニューの各モードボタンが next_question() を呼び、
@@ -1125,6 +1145,9 @@ def page_game():
         return
 
     if st.session_state.mode == "menu":
+        # ▼ ランキング（Firebaseとのマージ）はメニュー表示時だけ取得する。
+        #   クイズ回答のたびの再描画で毎回通信すると重くなるため。
+        ranking = merged_ranking(course)
         game_menu(words, missed, ranking)
         return
 
