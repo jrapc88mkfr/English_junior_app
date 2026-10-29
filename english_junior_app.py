@@ -1319,7 +1319,7 @@ def page_game():
 
                         # ★ Lv1 と Lv2 を交互に切り替える(Junior)
                         if course == "Junior":
-                            stage = (st.session_state.level - 1) % 2
+                            stage = (st.session_state.level - 1) % 5
                         elif course == "High":
                             stage = (st.session_state.level - 1) % 8
                         else:
@@ -1440,7 +1440,7 @@ def page_game():
 
                         # ★ Lv1 と Lv2 を交互に切り替える(Junior)
                         if course == "Junior":
-                            stage = (st.session_state.level - 1) % 2
+                            stage = (st.session_state.level - 1) % 5
                         elif course == "High":
                             stage = (st.session_state.level - 1) % 8
                         else:
@@ -1555,7 +1555,7 @@ def page_game():
                         # ★単語帳切り替え（通常モードと同じ）
                         # ★ Lv1 と Lv2 を交互に切り替える(Junior)
                         if course == "Junior":
-                            stage = (st.session_state.level - 1) % 2
+                            stage = (st.session_state.level - 1) % 5
                         elif course == "High":
                             stage = (st.session_state.level - 1) % 8
                         else:
