@@ -1573,6 +1573,7 @@ def page_game():
                     st.session_state.time_combo = 0
                     st.session_state.time_score -= 1
                     st.session_state.streak = 0
+                    add_or_reset_missed(missed, word)   # ← この行を追加
                     st.error(f"不正解… 正解は「{correct}」")
                     # 演出＋効果音（共通化）
                     effect_placeholder.empty()
